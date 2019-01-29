@@ -18,12 +18,15 @@ uint8_t value[8];
 
 bool buttonPressed = false;
 bool buttonPressedTwice = false;
+bool lostSignal = false;
 
 unsigned long firstDebounceTime = 0;
 unsigned long secondDebounceTime = 0;
+unsigned long lastSignalReceived = 0;
 
-const unsigned long debounceDelay = 3000;
-const unsigned long cancelDelay = 5000;
+const unsigned long DEBOUNCE_DELAY = 3000;
+const unsigned long CANCEL_DELAY = 5000;
+const unsigned long SIGNAL_DELAY = 10000;
 
 void setup()
 {
@@ -57,9 +60,13 @@ void buttonEvent()
 void loop()
 {
   receiveData();
-  interpretSignal();
-  checkButtonTwicePress();
-  // displayData();
+  checkSignalDelay();
+  if (lostSignal == false)
+  {
+    interpretSignal();
+    checkButtonTwicePress();
+    // displayData();
+  }
 }
 
 void receiveData()
@@ -72,6 +79,7 @@ void receiveData()
   if (driver.recv(buf, &buflen)) // Non-blocking
   {
     readData(buf, key, value);
+    lastSignalReceived = millis();
   }
 }
 
@@ -129,7 +137,7 @@ void checkButtonTwicePress()
 {
   if (buttonPressed == true)
   {
-    if ((secondDebounceTime - firstDebounceTime) > debounceDelay)
+    if ((secondDebounceTime - firstDebounceTime) > DEBOUNCE_DELAY)
     {
       buttonPressedTwice = true;
       Serial.println("Pressed button twice");
@@ -139,16 +147,46 @@ void checkButtonTwicePress()
   }
 }
 
+void checkSignalDelay()
+{
+  if ((millis() - lastSignalReceived) > SIGNAL_DELAY)
+  {
+    if (lostSignal == false)
+    {
+      lostSignal = true;
+    }
+    tone(A0, 300, 700);
+    delay(1400);
+    buttonPressed = false;
+    buttonPressedTwice = false;
+    firstDebounceTime = 0;
+    secondDebounceTime = 0;
+  }
+  else
+  {
+    if (lostSignal == true)
+    {
+      tone(A0, 900, 150);
+      delay(300);
+      tone(A0, 900, 150);
+      delay(300);
+      // tone(A0, 900, 150);
+      // delay(300);
+    }
+    lostSignal = false;
+  }
+}
+
 /*
  * What it should do:
- * 1. Show current temperature sent by the transmitter.
- * 2a. Turn on the sound alarm if received signal from
+ * 1. Show current temperature sent by the transmitter.         CHECK
+ * 2a. Turn on the sound alarm if received signal from          CHECK
  *     the transmitter, until snooze button is pressed.
- * 2b. Turn on the sound alarm if temperature has gone
+ * 2b. Turn on the sound alarm if temperature has gone          CHECK
  *     too high or low, based on saved variables received
  *     from the transmitter.
- * 3a. Make different sound alarms when received different
+ * 3.  Make different sound alarms when received different      CHECK
  *     events.
- * 3b. Make different sound alarms when different events
- *     occur (when device is capable of storing variables)
+ * 4.  Turn on the sound alarm if battery level is too low      TODO
+ * 5.  Turn on the sound alarm if device loses signal           CHECK
  */
