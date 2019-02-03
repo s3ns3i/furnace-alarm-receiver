@@ -2,12 +2,18 @@
 
 #include <RH_ASK.h>
 #include <SPI.h> // Not actualy used but needed to compile
+#include <stdlib.h>
 
 #define TOO_HOT "HOT"
 #define TOO_COLD "COL"
+#define CRITICAL "CRT"
 #define OK "OK"
 #define TOO_HOT_ADDR 0
 #define TOO_COLD_ADDR 1
+#define DEBOUNCE_DELAY 3000
+#define CANCEL_DELAY 5000
+#define SIGNAL_DELAY 10000
+#define TEMP_THRESHOLD 5.0f
 
 RH_ASK driver;
 
@@ -19,14 +25,14 @@ uint8_t value[8];
 bool buttonPressed = false;
 bool buttonPressedTwice = false;
 bool lostSignal = false;
+bool reachedCriticalTemperature = false;
 
 unsigned long firstDebounceTime = 0;
 unsigned long secondDebounceTime = 0;
 unsigned long lastSignalReceived = 0;
 
-const unsigned long DEBOUNCE_DELAY = 3000;
-const unsigned long CANCEL_DELAY = 5000;
-const unsigned long SIGNAL_DELAY = 10000;
+float currentTemperature = 0.0f;
+float milestoneTemperature = 0.0f;
 
 void setup()
 {
@@ -42,11 +48,13 @@ void setup()
 
 void buttonEvent()
 {
-  Serial.println("Button noise");
+  if (reachedCriticalTemperature == true)
+  {
+    return;
+  }
   if (buttonPressed == true)
   {
     secondDebounceTime = millis();
-    Serial.print("Time between debounces: ");
     Serial.println(secondDebounceTime - firstDebounceTime);
   }
   if (buttonPressed == false)
@@ -54,6 +62,20 @@ void buttonEvent()
     buttonPressed = true;
     firstDebounceTime = millis();
     secondDebounceTime = millis();
+  }
+}
+
+void checkButtonTwicePress()
+{
+  if (buttonPressed == true)
+  {
+    if ((secondDebounceTime - firstDebounceTime) > DEBOUNCE_DELAY)
+    {
+      buttonPressedTwice = true;
+      milestoneTemperature = currentTemperature;
+    }
+    firstDebounceTime = 0;
+    secondDebounceTime = 0;
   }
 }
 
@@ -65,6 +87,7 @@ void loop()
   {
     interpretSignal();
     checkButtonTwicePress();
+    checkTemperatureGrowAfterSnooze();
     // displayData();
   }
 }
@@ -104,46 +127,43 @@ void readData(const uint8_t *data, uint8_t *key, uint8_t *value)
     ++j;
   }
   value[j] = '\0';
+  currentTemperature = atof((char *)value);
 }
 
 void interpretSignal()
-{
+{  
   if (strcmp(TOO_COLD, (char *)key) == 0 && buttonPressed == false)
   {
-    Serial.print("Alert!: ");
-    Serial.println((char *)buf);
+    reachedCriticalTemperature = false;
     tone(A0, 500, 500);
     delay(1000);
   }
   else if (strcmp(TOO_HOT, (char *)key) == 0 && buttonPressedTwice == false)
   {
-    Serial.print("Alert!: ");
-    Serial.println((char *)buf);
+    reachedCriticalTemperature = false;
     tone(A0, 1000, 150);
     delay(300);
   }
+  else if (strcmp(CRITICAL, (char *)key) == 0)
+  {
+    reachedCriticalTemperature = true;
+    tone(A0, 1000, 120);
+    delay(240);
+  }
   else if (strcmp(OK, (char *)key) == 0)
   {
+    reachedCriticalTemperature = false;
     buttonPressed = false;
     buttonPressedTwice = false;
-    // Message with a good checksum received, dump it.
-    Serial.print("Message: ");
-    Serial.println((char *)buf);
     delay(900);
   }
 }
 
-void checkButtonTwicePress()
+void checkTemperatureGrowAfterSnooze()
 {
-  if (buttonPressed == true)
+  if(currentTemperature >= (milestoneTemperature + TEMP_THRESHOLD) && buttonPressedTwice == true)
   {
-    if ((secondDebounceTime - firstDebounceTime) > DEBOUNCE_DELAY)
-    {
-      buttonPressedTwice = true;
-      Serial.println("Pressed button twice");
-    }
-    firstDebounceTime = 0;
-    secondDebounceTime = 0;
+    buttonPressedTwice = false;
   }
 }
 
@@ -155,12 +175,13 @@ void checkSignalDelay()
     {
       lostSignal = true;
     }
-    tone(A0, 300, 700);
-    delay(1400);
     buttonPressed = false;
     buttonPressedTwice = false;
+    reachedCriticalTemperature = false;
     firstDebounceTime = 0;
     secondDebounceTime = 0;
+    tone(A0, 300, 700);
+    delay(1400);
   }
   else
   {
@@ -170,8 +191,6 @@ void checkSignalDelay()
       delay(300);
       tone(A0, 900, 150);
       delay(300);
-      // tone(A0, 900, 150);
-      // delay(300);
     }
     lostSignal = false;
   }
@@ -179,7 +198,7 @@ void checkSignalDelay()
 
 /*
  * What it should do:
- * 1. Show current temperature sent by the transmitter.         CHECK
+ * 1.  Show current temperature sent by the transmitter.        CHECK
  * 2a. Turn on the sound alarm if received signal from          CHECK
  *     the transmitter, until snooze button is pressed.
  * 2b. Turn on the sound alarm if temperature has gone          CHECK
@@ -189,4 +208,11 @@ void checkSignalDelay()
  *     events.
  * 4.  Turn on the sound alarm if battery level is too low      TODO
  * 5.  Turn on the sound alarm if device loses signal           CHECK
+ * 6.  If temperature is above threshold and device is          CHECK
+ *     snoozed, then if it goes another 5 degrees up, it
+ *     should start alarming again
+ * 7.  Do the same when temperature is below threshold          NOT IMPLEMENTING
+ * 8.  If max temperature or above has been reached             CHECK
+ *     (CRITICAL event), alarm cannot be snoozed until it
+ *     gets TOO_HOT event again
  */
